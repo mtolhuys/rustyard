@@ -11,9 +11,17 @@ and optional database/cache services. Rustyard supplies portable Rust project
 configuration and a native source watcher. There is no PHP requirement in the
 Rust app and no per-app container image.
 
+## Requirements
+
+- Linux with systemd (validated); macOS untested
+- Rust 1.89+ and Cargo
+- [Lerd](https://lerd.sh) >= 1.24, installed, running and healthy (host-proxy support)
+- `curl` (used by `verify` and `up --url`, and checked by `doctor`)
+- `journalctl` for `rustyard logs` on Linux
+- For contributors only: `python3` for `scripts/smoke.py`
+
 ## Install and use
 
-Prerequisites: Rust 1.89+, Cargo, a configured and healthy Lerd installation.
 Do not run Rustyard as root. No system setup or tool downloads happen silently.
 
 ```bash
