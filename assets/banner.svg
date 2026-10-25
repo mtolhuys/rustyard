@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="t d">
+  <title id="t">Rustyard</title>
+  <desc id="d">Rustyard: a Rust-first local web development workflow, powered by Lerd.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16120f"/>
+      <stop offset="1" stop-color="#2a1a12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f4a261"/>
+      <stop offset="1" stop-color="#d9531e"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.04"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="320" fill="url(#bg)"/>
+  <rect width="1280" height="320" fill="url(#grid)"/>
+  <rect y="316" width="1280" height="4" fill="url(#accent)"/>
+
+  <!-- gear mark -->
+  <g transform="translate(160 160)" fill="none" stroke="url(#accent)" stroke-width="10" stroke-linejoin="round">
+    <circle r="62"/>
+    <circle r="22" stroke-width="8"/>
+    <g stroke-linecap="round" stroke-width="16">
+      <path d="M0-62V-84M0 62V84M-62 0H-84M62 0H84"/>
+      <path d="M44-44 60-60M-44-44-60-60M44 44 60 60M-44 44-60 60"/>
+    </g>
+  </g>
+
+  <g font-family="'Inter','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif">
+    <text x="290" y="168" font-size="84" font-weight="700" fill="#fff4ea" letter-spacing="-2">Rustyard</text>
+    <text x="294" y="214" font-size="28" fill="#e7cdb8">Rust-first local web development, powered by Lerd.</text>
+  </g>
+  <g font-family="ui-monospace,'SF Mono','JetBrains Mono',Menlo,Consolas,monospace" font-size="20">
+    <rect x="294" y="238" width="470" height="40" rx="8" fill="#000" fill-opacity="0.35" stroke="#ffffff" stroke-opacity="0.12"/>
+    <text x="312" y="265" fill="#f4a261">$</text>
+    <text x="336" y="265" fill="#fff4ea">rustyard up --url https://app.test</text>
+  </g>
+</svg>
