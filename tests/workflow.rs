@@ -421,3 +421,52 @@ fn dev_restarts_on_edits_passes_bind_env_and_stops_descendants_on_sigterm() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn dev_starts_an_app_again_after_it_fails_at_start_without_a_source_change() {
+    // Like a database or network address that is not ready yet at boot: the
+    // first two starts fail, the third stays up.
+    let dir = project();
+    let script = "n=$(cat attempts 2>/dev/null || echo 0)\nn=$((n + 1))\necho \"$n\" > attempts\n[ \"$n\" -ge 3 ] || exit 1\ntrap 'exit 0' TERM INT\necho up > ready\nwhile :; do sleep 1; done\n";
+    fs::write(dir.path().join("server.sh"), script).unwrap();
+    let output = cli(
+        dir.path(),
+        &["init", "--port", "3108", "--", "sh", "server.sh"],
+    );
+    assert!(output.status.success());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rustyard"))
+        .arg("-C")
+        .arg(dir.path())
+        .arg("dev")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // The retries wait 1s and then 2s.
+    let until = Instant::now() + Duration::from_secs(15);
+    while !dir.path().join("ready").exists() {
+        if Instant::now() > until {
+            unsafe {
+                libc::kill(child.id() as i32, libc::SIGTERM);
+            }
+            let _ = child.wait();
+            panic!("the app was not started again after failing at start");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("attempts"))
+            .unwrap()
+            .trim(),
+        "3"
+    );
+    unsafe {
+        libc::kill(child.id() as i32, libc::SIGTERM);
+    }
+    let until = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < until, "runner did not stop");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

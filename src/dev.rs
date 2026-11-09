@@ -8,10 +8,49 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     process::{Child, Command},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 type Snapshot = BTreeMap<PathBuf, u64>;
+
+/// Delays before starting an app again after it exited on its own. A start
+/// that races something not ready yet (a database container, a network
+/// address that appears after boot) recovers on its own; a real error still
+/// stops retrying after a few minutes instead of filling the log forever.
+const RETRY_DELAYS: [u64; 8] = [1, 2, 5, 10, 20, 30, 60, 60];
+/// An app that ran this long before exiting gets the full retry schedule again.
+const STABLE_RUN: Duration = Duration::from_secs(60);
+
+/// What to do after the app exited on its own.
+#[derive(Debug, PartialEq)]
+enum AfterExit {
+    RetryIn(Duration),
+    WaitForChange,
+}
+
+#[derive(Default)]
+struct Retries {
+    attempt: usize,
+}
+
+impl Retries {
+    fn after_exit(&mut self, ran_for: Duration) -> AfterExit {
+        if ran_for >= STABLE_RUN {
+            self.attempt = 0;
+        }
+        match RETRY_DELAYS.get(self.attempt) {
+            Some(seconds) => {
+                self.attempt += 1;
+                AfterExit::RetryIn(Duration::from_secs(*seconds))
+            }
+            None => AfterExit::WaitForChange,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.attempt = 0;
+    }
+}
 
 fn visit(path: &Path, snapshot: &mut Snapshot) -> Result<()> {
     let metadata = match fs::symlink_metadata(path) {
@@ -132,9 +171,13 @@ pub async fn run(root: &Path, config: &Config) -> Result<()> {
         config.command
     );
     let mut process = Process::spawn(root, config)?;
+    let mut started = Instant::now();
+    let mut retries = Retries::default();
+    // When the app has exited: None while waiting for a source change,
+    // Some(instant) when it is due to start again.
+    let mut exited: Option<Option<Instant>> = None;
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
-    let mut exit_reported = false;
     loop {
         tokio::select! {
             result = &mut shutdown => { result?; return Ok(()); }
@@ -147,14 +190,32 @@ pub async fn run(root: &Path, config: &Config) -> Result<()> {
                     eprintln!("Rustyard: source changed, restarting…");
                     process.stop();
                     process = Process::spawn(root, config)?;
-                    exit_reported = false;
-                } else if !exit_reported {
-                    if let Some(status) = process.0.as_mut().expect("active process").try_wait()? {
-                        // Reap/stop remaining descendants now; do not retain an old process-group ID.
-                        process.stop();
-                        eprintln!("Rustyard: app exited ({status}). Waiting for a source change; build/runtime output is above.");
-                        exit_reported = true;
+                    started = Instant::now();
+                    retries.reset();
+                    exited = None;
+                } else if let Some(due) = exited {
+                    if due.is_some_and(|at| Instant::now() >= at) {
+                        eprintln!("Rustyard: starting the app again…");
+                        process = Process::spawn(root, config)?;
+                        started = Instant::now();
+                        exited = None;
                     }
+                } else if let Some(status) = process.0.as_mut().expect("active process").try_wait()? {
+                    // Reap/stop remaining descendants now; do not retain an old process-group ID.
+                    process.stop();
+                    exited = Some(match retries.after_exit(started.elapsed()) {
+                        AfterExit::RetryIn(delay) => {
+                            eprintln!(
+                                "Rustyard: app exited ({status}). Starting it again in {}s; a source change restarts it at once. Output is above.",
+                                delay.as_secs()
+                            );
+                            Some(Instant::now() + delay)
+                        }
+                        AfterExit::WaitForChange => {
+                            eprintln!("Rustyard: app exited ({status}) again. Waiting for a source change; build/runtime output is above.");
+                            None
+                        }
+                    });
                 }
             }
         }
@@ -198,6 +259,32 @@ mod tests {
         fs::remove_file(dir.path().join("templates/index.html"))?;
         assert_eq!(edited, snapshot(dir.path(), &paths)?);
         Ok(())
+    }
+
+    #[test]
+    fn retries_a_failing_start_with_backoff_then_waits_for_a_change() {
+        let mut retries = Retries::default();
+        let quick = Duration::from_millis(100);
+        let delays: Vec<AfterExit> = (0..RETRY_DELAYS.len() + 1)
+            .map(|_| retries.after_exit(quick))
+            .collect();
+        let expected: Vec<AfterExit> = RETRY_DELAYS
+            .iter()
+            .map(|s| AfterExit::RetryIn(Duration::from_secs(*s)))
+            .chain([AfterExit::WaitForChange])
+            .collect();
+        assert_eq!(delays, expected);
+        // A run long enough to count as stable earns the full schedule again.
+        assert_eq!(
+            retries.after_exit(STABLE_RUN),
+            AfterExit::RetryIn(Duration::from_secs(RETRY_DELAYS[0]))
+        );
+        retries.after_exit(quick);
+        retries.reset();
+        assert_eq!(
+            retries.after_exit(quick),
+            AfterExit::RetryIn(Duration::from_secs(RETRY_DELAYS[0]))
+        );
     }
 
     #[cfg(unix)]
